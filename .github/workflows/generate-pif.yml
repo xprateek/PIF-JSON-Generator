@@ -1,0 +1,125 @@
+name: PIF Generator
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+
+concurrency:
+  group: pif-generator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release: ${{ steps.check.outputs.new_release }}
+      results: ${{ steps.check.outputs.results }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Check for new releases
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/check_releases.py
+
+  generate-pif:
+    needs: check-releases
+    if: needs.check-releases.outputs.new_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        release: ${{ fromJson(needs.check-releases.outputs.results) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Generate PIF files for ${{ matrix.release.repo_type }}
+        env:
+          ASSETS: ${{ toJson(matrix.release.assets) }}
+          REPO_TYPE: ${{ matrix.release.repo_type }}
+          LATEST_TAG: ${{ matrix.release.latest_tag }}
+        run: |
+          echo "[INFO] Processing: $REPO_TYPE @ $LATEST_TAG"
+          echo "[INFO] Assets: ${{ matrix.release.count }}"
+          python scripts/generate_all_pifs.py "$ASSETS" "$REPO_TYPE"
+      
+      - name: Validate generated files
+        run: |
+          echo "[VALIDATION] Checking all JSON files"
+          for file in *.json; do
+            if [ -f "$file" ]; then
+              echo "Validating: $file"
+              python -m json.tool "$file" > /dev/null || exit 1
+              
+              if grep -q '""' "$file"; then
+                echo "[ERROR] Empty fields found in $file"
+                cat "$file"
+                exit 1
+              fi
+            fi
+          done
+          echo "[OK] All files validated"
+      
+      - name: Update release tracker
+        run: |
+          echo "${{ matrix.release.latest_tag }}" > "last_release_${{ matrix.release.repo_type }}_tag.txt"
+          
+          git config user.name "PIF Bot"
+          git config user.email "bot@github.com"
+          
+          git add last_release_${{ matrix.release.repo_type }}_tag.txt
+          
+          if git diff --staged --quiet; then
+            echo "[INFO] No changes to tracker"
+          else
+            git commit -m "[AUTO] Update ${{ matrix.release.repo_type }} tracker: ${{ matrix.release.latest_tag }}"
+            git pull --rebase
+            git push
+            echo "[OK] Tracker updated"
+          fi
+      
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/create_release.py \
+            "${{ github.repository }}" \
+            "${{ matrix.release.latest_tag }}" \
+            "${{ matrix.release.repo_type }}"
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pif-files-${{ matrix.release.repo_type }}-${{ matrix.release.latest_tag }}
+          path: |
+            *.json
+            generated_files.txt
+          retention-days: 30
+      
+      - name: Notify completion
+        if: success()
+        run: |
+          echo "✅ Successfully generated ${{ matrix.release.count }} files"
+          echo "📦 Release: ${{ matrix.release.repo_type }}-PIF-${{ matrix.release.latest_tag }}"
