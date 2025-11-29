@@ -5,7 +5,7 @@ Check for new releases from monitored repositories
 import os
 import sys
 import json
-from github import Github, Auth  # Add Auth
+from github import Github, Auth
 from pathlib import Path
 
 
@@ -17,7 +17,7 @@ REPOS = [
 
 def check_releases(github_token):
     """Check all repos for new releases"""
-    auth = Auth.Token(github_token)  # FIXED: New auth method
+    auth = Auth.Token(github_token)
     g = Github(auth=auth)
     
     results = []

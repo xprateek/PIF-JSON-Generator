@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Core PIF Generator Library - FIXED VERSION
+Core PIF Generator Module for Android system.prop files
 """
 import requests
 import zipfile

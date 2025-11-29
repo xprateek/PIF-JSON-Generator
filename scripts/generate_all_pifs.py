@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Generate all PIF JSON files from asset list
-FIXED: Process all assets, validate output
 """
 import sys
 import json
